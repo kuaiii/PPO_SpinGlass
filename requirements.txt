@@ -1,0 +1,7 @@
+torch>=2.0
+torch-geometric>=2.3
+networkx>=2.8
+numpy>=1.21
+scipy>=1.7
+matplotlib>=3.5
+tensorboard

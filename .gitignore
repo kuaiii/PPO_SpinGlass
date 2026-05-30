@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# Checkpoints & logs
+checkpoint_*.pt
+*.log
+
+# Dataset (large, not for git)
+dataset/
+
+# Results
+comparison_*/
+*.png
+
+# Environment
+.env
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
