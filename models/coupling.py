@@ -20,7 +20,7 @@ class AttentionCoupling(nn.Module):
       - 对行做 softmax（或全局 softmax 后去对角线）
     """
 
-    def __init__(self, hidden_dim: int = 64, top_k: Optional[int] = None) -> None:
+    def __init__(self, hidden_dim: int = 64, top_k: Optional[int] = 50) -> None:
         """
         Args:
             hidden_dim: 节点嵌入维度。

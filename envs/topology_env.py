@@ -93,26 +93,70 @@ class DismantleEnv:
         self.sigma = largest_connected_component_ratio(self.G)
         return self._get_observation()
 
-    def _update_spin_state(self) -> None:
-        """更新自旋组态、三角环、公共邻居缓存。"""
-        self.s = adjacency_to_spin_dense(self.G, n_total=self.n)
-        n = self.n
-        # triadic_term_cache 需要节点编号连续 0..n-1
-        node_list = list(range(n))
-        G_relabeled = nx.relabel_nodes(self.G, {old: new for new, old in enumerate(sorted(self.G.nodes()))}, copy=True)
-        # 实际上我们假设输入图已经是 0..n-1
-        # 为避免 relabel 开销，直接使用 self.G
-        edge_list = []
-        for u, v in self.G.edges():
-            edge_list.append([u, v])
-            edge_list.append([v, u])
-        if len(edge_list) == 0:
-            edge_index = torch.zeros((2, 0), dtype=torch.long)
+    def _update_spin_state(self, incremental: bool = False, removed_node: Optional[int] = None, removed_neighbors: Optional[List[int]] = None) -> None:
+        """
+        更新自旋组态、三角环、公共邻居缓存。
+
+        Args:
+            incremental: 是否增量更新（只更新被移除节点相关）。
+            removed_node: 被移除的节点索引（增量模式时使用）。
+            removed_neighbors: 被移除节点的邻居列表（增量模式时使用）。
+        """
+        if incremental and removed_node is not None:
+            # 增量更新：只把被移除节点的行/列设为 -1
+            self.s[removed_node, :] = -1.0
+            self.s[:, removed_node] = -1.0
+            # 增量更新三角环和公共邻居
+            if removed_neighbors is not None:
+                self._remove_node_from_triadic_cache(removed_node, removed_neighbors)
         else:
-            edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
-        self.triangles, self.common_neighbors = triadic_term_cache(edge_index, self.n)
-        # 哈密顿量初始值设为 0（J 由外部模型提供）
+            # 全量重建（reset 时使用）
+            self.s = adjacency_to_spin_dense(self.G, n_total=self.n)
+            edge_list = []
+            for u, v in self.G.edges():
+                edge_list.append([u, v])
+                edge_list.append([v, u])
+            if len(edge_list) == 0:
+                edge_index = torch.zeros((2, 0), dtype=torch.long)
+            else:
+                edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+            self.triangles, self.common_neighbors = triadic_term_cache(edge_index, self.n)
         self.H = 0.0
+
+    def _remove_node_from_triadic_cache(self, node: int, neighbors: List[int]) -> None:
+        """从三角环和公共邻居缓存中增量移除与指定节点相关的条目。
+        
+        对于稠密图（三角形数量 > 5000），全量重建比逐条删除更快。
+        """
+        # 稠密图回退到全量重建
+        if len(self.triangles) > 5000:
+            edge_list = []
+            for u, v in self.G.edges():
+                edge_list.append([u, v])
+                edge_list.append([v, u])
+            if len(edge_list) == 0:
+                edge_index = torch.zeros((2, 0), dtype=torch.long)
+            else:
+                edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+            self.triangles, self.common_neighbors = triadic_term_cache(edge_index, self.n)
+            return
+
+        # 1. 删除包含 node 的三角形（稀疏图时很快）
+        if self.triangles:
+            self.triangles = [t for t in self.triangles if node not in t]
+        # 2. 删除以 node 为 key 的公共邻居
+        keys_to_delete = [k for k in self.common_neighbors if node in k]
+        for k in keys_to_delete:
+            del self.common_neighbors[k]
+        # 3. 对于 node 的每一对邻居 (u, v)，从 (u,v) 的公共邻居集合中移除 node
+        nbrs = set(neighbors)
+        for i, u in enumerate(neighbors):
+            for v in neighbors[i + 1 :]:
+                key = (min(u, v), max(u, v))
+                if key in self.common_neighbors and node in self.common_neighbors[key]:
+                    self.common_neighbors[key].discard(node)
+                    if not self.common_neighbors[key]:
+                        del self.common_neighbors[key]
 
     def _get_observation(self) -> Data:
         """构造 PyG Data 观测。"""
@@ -153,8 +197,8 @@ class DismantleEnv:
         self.removed_nodes.add(node_idx)
         self.step_count += 1
 
-        # 更新自旋状态
-        self._update_spin_state()
+        # 增量更新自旋状态
+        self._update_spin_state(incremental=True, removed_node=node_idx, removed_neighbors=neighbors)
         if self.J is not None:
             self.H = hamiltonian(self.J, self.s, self.gamma, self.h_field, self.triangles).item()
         else:

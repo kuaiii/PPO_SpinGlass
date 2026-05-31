@@ -94,6 +94,7 @@ class SpinGlassPPOTrainer:
         train_data_dir: Optional[str] = None,
         max_train_graphs: Optional[int] = None,
         subgraph_size: Optional[int] = None,
+        random_graph_mix: float = 0.0,
     ) -> None:
         """
         Args:
@@ -122,6 +123,7 @@ class SpinGlassPPOTrainer:
             train_data_dir: 训练图数据目录，None 时随机生成。
             max_train_graphs: 最大加载训练图数。
             subgraph_size: 大图子采样目标大小，None 时不采样。
+            random_graph_mix: 随机图混合比例，0.0=严格按n筛选，1.0=完全随机采样。
         """
         assert task in ("dismantle", "construct", "rewiring")
         self.task = task
@@ -192,6 +194,7 @@ class SpinGlassPPOTrainer:
         # 加载真实训练数据
         self.train_graphs: List[nx.Graph] = []
         self.subgraph_size = subgraph_size
+        self.random_graph_mix = random_graph_mix
         if train_data_dir is not None:
             self.train_graphs = load_graphs_from_dir(
                 train_data_dir,
@@ -216,11 +219,15 @@ class SpinGlassPPOTrainer:
         """
         # 如果加载了真实数据，从中采样
         if self.train_graphs:
-            # 筛选接近目标大小的图
-            candidates = [G for G in self.train_graphs if abs(G.number_of_nodes() - n) <= max(20, n // 2)]
-            if not candidates:
-                candidates = self.train_graphs
-            G = random.choice(candidates)
+            # 随机混合模式：按概率随机选图，不完全按 n 筛选
+            if self.random_graph_mix > 0 and random.random() < self.random_graph_mix:
+                G = random.choice(self.train_graphs)
+            else:
+                # 筛选接近目标大小的图
+                candidates = [G for G in self.train_graphs if abs(G.number_of_nodes() - n) <= max(20, n // 2)]
+                if not candidates:
+                    candidates = self.train_graphs
+                G = random.choice(candidates)
             # 如果图太大，采样子图
             if self.subgraph_size is not None and G.number_of_nodes() > self.subgraph_size:
                 G = sample_subgraph(G, self.subgraph_size)

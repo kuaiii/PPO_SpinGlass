@@ -153,6 +153,30 @@ def main():
         default=100,
         help="大图子采样目标大小",
     )
+    parser.add_argument(
+        "--random_graph_mix",
+        type=float,
+        default=0.0,
+        help="随机图混合比例(0.0~1.0)，用于密度适应训练",
+    )
+    parser.add_argument(
+        "--max_nodes",
+        type=int,
+        default=100,
+        help="课程学习最大节点数",
+    )
+    parser.add_argument(
+        "--node_increment",
+        type=int,
+        default=10,
+        help="课程学习每次增加的节点数",
+    )
+    parser.add_argument(
+        "--increment_every",
+        type=int,
+        default=100,
+        help="课程学习每隔多少iteration增量",
+    )
 
     args = parser.parse_args()
     set_seed(args.seed)
@@ -181,9 +205,13 @@ def main():
             batch_size=args.batch_size,
             device=args.device,
             curriculum=args.curriculum,
+            max_nodes=args.max_nodes,
+            node_increment=args.node_increment,
+            increment_every=args.increment_every,
             train_data_dir=args.train_data_dir,
             max_train_graphs=args.max_train_graphs,
             subgraph_size=args.subgraph_size,
+            random_graph_mix=args.random_graph_mix,
         )
         history = trainer.train(max_iters=args.max_iters)
         print("\n[Train] Training completed.")
