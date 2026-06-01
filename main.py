@@ -177,6 +177,12 @@ def main():
         default=100,
         help="课程学习每隔多少iteration增量",
     )
+    parser.add_argument(
+        "--save_every",
+        type=int,
+        default=50,
+        help="每隔多少iteration保存一次checkpoint，0表示不保存",
+    )
 
     args = parser.parse_args()
     set_seed(args.seed)
@@ -213,26 +219,13 @@ def main():
             subgraph_size=args.subgraph_size,
             random_graph_mix=args.random_graph_mix,
         )
-        history = trainer.train(max_iters=args.max_iters)
+        ckpt_path = f"checkpoint_{args.task}.pt"
+        history = trainer.train(max_iters=args.max_iters, save_every=args.save_every, ckpt_path=ckpt_path)
         print("\n[Train] Training completed.")
         print(f"[Train] Final avg reward: {history['reward'][-1]:.4f}")
 
-        # 保存模型
-        checkpoint = {
-            "encoder": trainer.encoder.state_dict(),
-            "coupling": trainer.coupling.state_dict(),
-            "value_head": trainer.value_head.state_dict(),
-            "task": args.task,
-            "n_nodes": args.n_nodes,
-        }
-        if args.task in ("dismantle", "construct"):
-            checkpoint["policy_head"] = trainer.policy_head.state_dict()
-        else:
-            checkpoint["policy_head_add"] = trainer.policy_head_add.state_dict()
-            checkpoint["policy_head_remove"] = trainer.policy_head_remove.state_dict()
-
-        ckpt_path = f"checkpoint_{args.task}.pt"
-        torch.save(checkpoint, ckpt_path)
+        # 保存最终模型
+        trainer.save_checkpoint(ckpt_path)
         print(f"[Train] Checkpoint saved to {ckpt_path}")
 
     elif args.mode == "eval":

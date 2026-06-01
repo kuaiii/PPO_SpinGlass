@@ -174,6 +174,8 @@ python3 generate_training_graphs.py \
 3. **AttentionCoupling top_k**：默认 top_k=50，降低稠密图的 softmax 开销
 4. **Batch training**：PPO update 中每个 mini-batch 累加 loss 后做一次 backward+step
 5. **CPU 单线程**：`torch.set_num_threads(1)`，小图 GNN 加速 120 倍
+6. **定期保存 checkpoint**：`train()` 支持 `save_every` 参数，每 N 个 iteration 自动保存
+7. **减少 K_epochs**：从 4 降至 2，大幅降低大图 update 时间
 
 ### 训练速度参考（CPU）
 
@@ -181,8 +183,10 @@ python3 generate_training_graphs.py \
 |------|-------------|---------|
 | n=20 稀疏 | ~20s | ~3ms |
 | n=100 稀疏 | ~25s | ~5ms |
-| n=1000 稀疏 (m≈4000) | ~15min | ~45ms |
+| n=1000 稀疏 (m≈4000) | ~15-25min | ~45ms |
 | n=200 中等密度 | ~25s | ~40ms |
+
+> **注意**：n=1000 大图训练中 update() 是主要瓶颈（单次 update 约 2-12 分钟），建议后台运行或使用 GPU。
 
 ---
 
@@ -207,6 +211,34 @@ python3 generate_training_graphs.py \
 - 与第 1 名差距从 +0.93 缩小至 **+0.05**
 
 ---
+
+## 训练进度
+
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| **环境优化** | ✅ 完成 | 增量 spin/triadic cache、top_k=50、定期 checkpoint |
+| **数据生成** | ✅ 完成 | 800 张稀疏大图 + 370 张稠密小图 |
+| **轨道 2：密度适应** | ✅ 完成 | 200 iter, n≤200, 密度 0.001~0.5, **reward=0.70** |
+| **轨道 1：规模扩展** | ⚠️ 已重启 | n=100→1000, 300 iter → 因 Iter 240 卡住已终止，重新配置后启动 |
+| **Benchmark n=1000** | ⏳ 等待 | 待轨道 1 完成后执行 |
+
+### 轨道 1 关键配置调整
+
+原始配置 `num_episodes=5, K_epochs=4` 在 n=1000 时每个 iteration 约 15-25 分钟，且**未保存中间 checkpoint**（Iter 240 卡住后训练丢失）。
+
+**优化后配置**：
+```bash
+python3 main.py --mode train --task dismantle \
+    --train_data_dir dataset/synth_training/sparse_large \
+    --subgraph_size 1000 --max_iters 300 --num_episodes 3 \
+    --device cpu --n_nodes 100 --curriculum \
+    --max_nodes 1000 --node_increment 50 --increment_every 10 \
+    --save_every 20
+```
+
+- `num_episodes=3`：减少 collect/update 时间
+- `K_epochs=2`（代码默认值）：update 时间减半
+- `save_every=20`：每 20 iter 自动保存 checkpoint，避免训练丢失
 
 ## 项目结构
 

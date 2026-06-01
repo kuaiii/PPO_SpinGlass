@@ -79,7 +79,7 @@ class SpinGlassPPOTrainer:
         gamma: float = 0.99,
         lam: float = 0.95,
         eps_clip: float = 0.2,
-        K_epochs: int = 4,
+        K_epochs: int = 2,
         num_episodes: int = 20,
         batch_size: int = 64,
         entropy_coef: float = 0.01,
@@ -527,12 +527,30 @@ class SpinGlassPPOTrainer:
 
         return stats
 
-    def train(self, max_iters: int = 200) -> Dict[str, List[float]]:
+    def save_checkpoint(self, path: str) -> None:
+        """保存模型 checkpoint。"""
+        checkpoint = {
+            "encoder": self.encoder.state_dict(),
+            "coupling": self.coupling.state_dict(),
+            "value_head": self.value_head.state_dict(),
+            "task": self.task,
+            "n_nodes": self.n_nodes,
+        }
+        if self.task in ("dismantle", "construct"):
+            checkpoint["policy_head"] = self.policy_head.state_dict()
+        else:
+            checkpoint["policy_head_add"] = self.policy_head_add.state_dict()
+            checkpoint["policy_head_remove"] = self.policy_head_remove.state_dict()
+        torch.save(checkpoint, path)
+
+    def train(self, max_iters: int = 200, save_every: int = 50, ckpt_path: str = "checkpoint_dismantle.pt") -> Dict[str, List[float]]:
         """
         主训练循环。
 
         Args:
             max_iters: 最大训练轮数。
+            save_every: 每隔多少 iteration 保存一次 checkpoint。
+            ckpt_path: checkpoint 保存路径。
 
         Returns:
             训练历史字典。
@@ -568,5 +586,10 @@ class SpinGlassPPOTrainer:
                     f"entropy={stats['entropy']:.4f} | "
                     f"reward={avg_reward:.4f}"
                 )
+
+            # 定期保存 checkpoint
+            if save_every > 0 and iteration > 0 and iteration % save_every == 0:
+                self.save_checkpoint(ckpt_path)
+                print(f"[Checkpoint] Saved to {ckpt_path} at iteration {iteration}")
 
         return history
