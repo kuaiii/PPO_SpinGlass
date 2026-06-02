@@ -6,14 +6,17 @@ __pycache__/
 .pytest_cache/
 
 # Checkpoints & logs
-checkpoint_*.pt
+checkpoints/
+logs/
 *.log
 
 # Dataset (large, not for git)
 dataset/
 
 # Results
+results/
 comparison_*/
+benchmark_synth_results/
 *.png
 
 # Environment
@@ -24,3 +27,9 @@ venv/
 # IDE
 .vscode/
 .idea/
+.agents/
+*.dot
+
+# Saved test results (keep in git)
+!test_results/
+!test_results/**/*.png

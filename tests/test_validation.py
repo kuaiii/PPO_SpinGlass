@@ -22,7 +22,7 @@ from models.encoder import TGNNEncoder
 from models.coupling import AttentionCoupling
 from models.policy import DismantlePolicyHead, ConstructPolicyHead
 from models.value import ValueHead
-from train_ppo import SpinGlassPPOTrainer
+from src.train_ppo import SpinGlassPPOTrainer
 from utils.spin_glass import (
     hamiltonian,
     delta_remove,
@@ -31,17 +31,23 @@ from utils.spin_glass import (
     triadic_term_cache,
 )
 from utils.graph_metrics import algebraic_connectivity
-from eval import evaluate_dismantle_policy, random_dismantle_baseline, compute_auc
+from src.eval import evaluate_dismantle_policy, random_dismantle_baseline, compute_auc
 
 
 def test_energy_consistency():
     """
     测试 1：能量一致性测试。
-    随机图 n=15，随机执行 5 步单条边添加/移除，
-    验证 env.H 的增量严格等于 delta_* 公式计算值（误差 < 1e-6）。
 
-    注意：节点移除会同时移除多条边，导致 delta_remove 不可简单叠加。
-    因此本测试针对单条边操作验证公式。
+    验证目标：
+        对随机图执行单条边的添加或移除操作后，环境内部哈密顿量 H 的实际
+        变化量必须严格等于 utils/spin_glass.py 中 delta_add / delta_remove
+        公式的理论计算值。该测试覆盖构造（h=+1）与拆解（h=-1）两种外部场。
+
+    失败指示：
+        若断言失败，说明 env.step() 中的能量更新逻辑、三角闭合项系数，
+        或 utils/spin_glass.py 中的 delta_* 公式存在符号/系数/实现错误。
+
+    容差：绝对误差 < 1e-5。
     """
     print("=" * 60)
     print("Test 1: Energy Consistency (Single Edge Operations)")
@@ -130,9 +136,19 @@ def test_energy_consistency():
 
 def test_ppo_convergence():
     """
-    测试 2：PPO 收敛测试。
-    在 n=20 星型图上训练拆解策略，验证 200 iteration 内学会优先移除中心节点，
-    且 LCC AUC 优于随机策略 > 30%。
+    测试 2：PPO 收敛测试（星型图拆解）。
+
+    验证目标：
+        在 n=20 的星型图上训练 200 iterations 后，策略必须学会优先移除中心节点
+        （中心节点移除后 LCC 下降最快），且策略的 LCC AUC 相比随机拆解基线
+        提升超过 30%。
+
+    失败指示：
+        - 若 first_node != center：策略头 DismantlePolicyHead 未正确学习局部分子场
+          或节点嵌入 Z 的区分度不足；
+        - 若 AUC 提升 < 30%：训练不充分、奖励设计缺陷或值函数估计偏差过大。
+
+    注意：该测试包含完整的 200 iteration PPO 训练，耗时约 1~3 分钟（CPU）。
     """
     print("=" * 60)
     print("Test 2: PPO Convergence on Star Graph")
@@ -159,7 +175,7 @@ def test_ppo_convergence():
         batch_size=32,
         entropy_coef=0.01,
         value_loss_coef=0.5,
-        device="cpu",
+        device="cuda",
         curriculum=False,
         max_nodes=n,
     )
@@ -180,7 +196,7 @@ def test_ppo_convergence():
         trainer.policy_head,
         trainer.value_head,
         G.copy(),
-        torch.device("cpu"),
+        torch.device("cuda"),
         max_steps=n,
     )
 
@@ -209,8 +225,15 @@ def test_ppo_convergence():
 
 def test_rewiring_conservation():
     """
-    测试 3：重构守恒测试。
-    RewiringEnv 运行 10 步，每步断言 |E| 不变。
+    测试 3：重构守恒测试（边数不变性）。
+
+    验证目标：
+        RewiringEnv 在执行 10 步随机合法的边交换（swap: remove + add）后，
+        图的边数必须严格保持与初始边数相等。
+
+    失败指示：
+        若断言失败，说明 RewiringEnv.step() 中的边移除/添加逻辑存在 bug，
+        或边交换合法性检查（remove 边存在、add 边不存在、非同一对节点）有漏洞。
     """
     print("=" * 60)
     print("Test 3: Rewiring Edge Count Conservation")
@@ -246,9 +269,17 @@ def test_rewiring_conservation():
 
 def test_physical_guidance():
     """
-    测试 4：物理引导测试。
-    固定随机 J，比较 h=+1 与 h=-1 时策略的动作分布差异。
-    构造倾向高 J_{ij} 边，拆解倾向高局部场节点。
+    测试 4：物理引导测试（外部场符号效应）。
+
+    验证目标：
+        在固定随机耦合矩阵 J 的条件下：
+        - 构造环境（h=+1）应优先选择 J_{ij} 为正的边（因为 +1 边降低能量）；
+        - 拆解环境（h=-1）应优先选择局部分子场 h_i 高的节点移除。
+        该测试验证外部场对能量景观的引导方向是否与物理直觉一致。
+
+    失败指示：
+        若断言失败，说明 local_field() 计算、能量符号定义，或环境奖励逻辑
+        与自旋玻璃哈密顿量的物理意义相反。
     """
     print("=" * 60)
     print("Test 4: Physical Guidance (h=+1 vs h=-1)")

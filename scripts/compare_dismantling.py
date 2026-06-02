@@ -19,6 +19,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from utils.io_utils import get_next_test_dir
 from models.encoder import TGNNEncoder
 from models.coupling import AttentionCoupling
 from models.policy import DismantlePolicyHead
@@ -27,6 +28,7 @@ from envs.topology_env import DismantleEnv
 from network_dismantling.unified_interface import dismantle, METHOD_REGISTRY
 
 logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def load_ppo_model(checkpoint_path: str, device: torch.device):
@@ -236,8 +238,14 @@ def evaluate_on_graph(
 def plot_comparison(
     results_dict: Dict[str, Dict[str, Any]],
     save_path: str = "comparison.png",
+    normalized: bool = False,
 ):
-    """绘制所有方法的 LCC 曲线对比图。"""
+    """绘制所有方法的 LCC 曲线对比图。
+
+    Args:
+        normalized: 若为 True，横坐标为移除节点比例（removed_nodes / n）；
+                    若为 False，横坐标为移除节点绝对数量。
+    """
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     valid_results = {k: v for k, v in results_dict.items() if "lcc_curve" in v}
@@ -248,11 +256,20 @@ def plot_comparison(
 
     colors = plt.cm.tab20(np.linspace(0, 1, len(valid_results)))
 
+    n_nodes = None
     for i, (method, res) in enumerate(sorted(valid_results.items())):
         curve = res["lcc_curve"]
-        axes[0].plot(curve, label=method, color=colors[i], marker="o", markersize=2, markevery=max(1, len(curve)//20))
+        if n_nodes is None:
+            n_nodes = res.get("n_nodes", len(curve))
+        x = np.arange(len(curve))
+        if normalized:
+            x = x / n_nodes if n_nodes > 0 else x
+        axes[0].plot(x, curve, label=method, color=colors[i], marker="o", markersize=2, markevery=max(1, len(curve)//20))
 
-    axes[0].set_xlabel("Removed Nodes")
+    if normalized:
+        axes[0].set_xlabel("The ratio of removed nodes")
+    else:
+        axes[0].set_xlabel("Removed nodes")
     axes[0].set_ylabel("LCC Ratio")
     axes[0].set_title("Dismantling Curves")
     axes[0].legend(fontsize=8)
@@ -281,20 +298,23 @@ def plot_comparison(
 def main():
     parser = argparse.ArgumentParser(description="Dismantling 对比实验")
     parser.add_argument("--test_dir", type=str, required=True, help="测试图目录（包含 .gml 文件）")
-    parser.add_argument("--checkpoint", type=str, default="checkpoint_dismantle.pt", help="PPO 模型 checkpoint")
+    parser.add_argument("--checkpoint", type=str, default=str(PROJECT_ROOT / "checkpoints" / "checkpoint_dismantle.pt"), help="PPO 模型 checkpoint")
     parser.add_argument("--methods", type=str, nargs="+", default=None,
                         help="要对比的算法列表，默认全部可用算法")
     parser.add_argument("--max_graphs", type=int, default=None, help="最大测试图数量")
     parser.add_argument("--stop_condition", type=float, default=0.01, help="LCC 停止阈值")
-    parser.add_argument("--output_dir", type=str, default="comparison_results", help="输出目录")
-    parser.add_argument("--device", type=str, default="cpu", help="计算设备")
+    parser.add_argument("--output_dir", type=str, default=None, help="输出目录。默认自动创建递增编号文件夹 results/tests/{编号}")
+    parser.add_argument("--device", type=str, default="cuda", help="计算设备")
     parser.add_argument("--timeout", type=float, default=30.0, help="每个 baseline 方法的超时时间（秒）")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     device = torch.device(args.device)
-    output_dir = Path(args.output_dir)
+    if args.output_dir is None:
+        output_dir = get_next_test_dir(PROJECT_ROOT / "results" / "tests")
+    else:
+        output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 加载 PPO 模型
@@ -345,7 +365,8 @@ def main():
                 seq, elapsed, error = run_baseline_with_timeout(
                     G, method,
                     stop_condition=max(1, int(args.stop_condition * G.number_of_nodes())),
-                    timeout=args.timeout
+                    timeout=args.timeout,
+                    use_mp=True,
                 )
                 res = evaluate_on_graph(G, method, seq, elapsed, error)
                 all_results[method].append(res)
@@ -406,13 +427,16 @@ def main():
         r1 = s.get("avg_R_1", np.nan)
         logger.info(f"{method:<25} {s['avg_auc']:<10.4f} {s['std_auc']:<10.4f} {s['avg_time']:<10.4f} {s['success_rate']:<8.2%} {r1:<10.4f}")
 
-    # 为第一张图绘制对比曲线
-    if graph_files:
-        first_graph_results = {}
+    # 为每张图绘制对比曲线（removed nodes 与 ratio 两个版本）
+    for idx, gfile in enumerate(graph_files):
+        graph_results = {}
         for method in all_results:
-            if all_results[method]:
-                first_graph_results[method] = all_results[method][0]
-        plot_comparison(first_graph_results, save_path=str(output_dir / "comparison_first_graph.png"))
+            if all_results[method] and idx < len(all_results[method]):
+                graph_results[method] = all_results[method][idx]
+        if graph_results:
+            stem = Path(gfile).stem
+            plot_comparison(graph_results, save_path=str(output_dir / f"{stem}_lcc.png"), normalized=False)
+            plot_comparison(graph_results, save_path=str(output_dir / f"{stem}_lcc_ratio.png"), normalized=True)
 
     logger.info(f"\nResults saved to {output_dir}")
 

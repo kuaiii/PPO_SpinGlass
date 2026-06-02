@@ -108,11 +108,12 @@ def ei_dismantle(G: nx.Graph, stop_condition: int, sigma: int = 2,
     return removed
 
 
-def _effective_degree(neighbors, degrees, eff_thr):
+def _effective_degree(neighbors, degrees, eff_thr, max_iter=100):
     n = len(degrees)
     effective = degrees.copy()
     changed = True
-    while changed:
+    iteration = 0
+    while changed and iteration < max_iter:
         changed = False
         new_eff = np.zeros(n, dtype=int)
         for i in range(n):
@@ -124,6 +125,7 @@ def _effective_degree(neighbors, degrees, eff_thr):
         if not np.array_equal(new_eff, effective):
             changed = True
             effective = new_eff
+        iteration += 1
     return effective
 
 

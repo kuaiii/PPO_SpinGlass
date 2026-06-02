@@ -7,6 +7,7 @@ PPO 训练器：SpinGlassPPOTrainer。
 
 from typing import Dict, List, Tuple, Optional, Any
 import copy
+import os
 import random
 import numpy as np
 import networkx as nx
@@ -23,7 +24,10 @@ from models.value import ValueHead
 from envs.topology_env import DismantleEnv, ConstructEnv, RewiringEnv
 from utils.graph_metrics import RunningMeanStd, nx_to_pyg_data
 from utils.spin_glass import local_field
+import logging
 from utils.graph_loader import load_graphs_from_dir, sample_subgraph
+
+logger = logging.getLogger(__name__)
 
 
 def compute_gae(
@@ -133,8 +137,8 @@ class SpinGlassPPOTrainer:
         self.node_increment = node_increment
         self.increment_every = increment_every
 
-        if device == "auto":
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if device == "auto" or device is None:
+            self.device = torch.device("cuda")
         else:
             self.device = torch.device(device)
 
@@ -535,6 +539,7 @@ class SpinGlassPPOTrainer:
             "value_head": self.value_head.state_dict(),
             "task": self.task,
             "n_nodes": self.n_nodes,
+            "iteration": self.iteration,
         }
         if self.task in ("dismantle", "construct"):
             checkpoint["policy_head"] = self.policy_head.state_dict()
@@ -543,7 +548,26 @@ class SpinGlassPPOTrainer:
             checkpoint["policy_head_remove"] = self.policy_head_remove.state_dict()
         torch.save(checkpoint, path)
 
-    def train(self, max_iters: int = 200, save_every: int = 50, ckpt_path: str = "checkpoint_dismantle.pt") -> Dict[str, List[float]]:
+    def load_checkpoint(self, path: str) -> int:
+        """加载模型 checkpoint，返回已训练的 iteration 数。"""
+        checkpoint = torch.load(path, map_location=self.device)
+        self.encoder.load_state_dict(checkpoint["encoder"])
+        self.coupling.load_state_dict(checkpoint["coupling"])
+        self.value_head.load_state_dict(checkpoint["value_head"])
+        if self.task in ("dismantle", "construct"):
+            self.policy_head.load_state_dict(checkpoint["policy_head"])
+        else:
+            self.policy_head_add.load_state_dict(checkpoint["policy_head_add"])
+            self.policy_head_remove.load_state_dict(checkpoint["policy_head_remove"])
+        # 恢复课程学习进度
+        if "n_nodes" in checkpoint:
+            self.n_nodes = checkpoint["n_nodes"]
+        start_iter = checkpoint.get("iteration", 0)
+        self.iteration = start_iter
+        print(f"[Checkpoint] Loaded from {path} at iteration {start_iter}")
+        return start_iter
+
+    def train(self, max_iters: int = 200, save_every: int = 50, ckpt_path: str = "checkpoint_dismantle.pt", resume: bool = False) -> Dict[str, List[float]]:
         """
         主训练循环。
 
@@ -551,13 +575,18 @@ class SpinGlassPPOTrainer:
             max_iters: 最大训练轮数。
             save_every: 每隔多少 iteration 保存一次 checkpoint。
             ckpt_path: checkpoint 保存路径。
+            resume: 是否从 ckpt_path 恢复训练。
 
         Returns:
             训练历史字典。
         """
+        start_iter = 0
+        if resume and os.path.exists(ckpt_path):
+            start_iter = self.load_checkpoint(ckpt_path)
+
         history = {"policy_loss": [], "value_loss": [], "entropy": [], "align_loss": [], "reward": []}
 
-        for iteration in range(max_iters):
+        for iteration in range(start_iter, max_iters):
             self.iteration = iteration
 
             # 课程学习

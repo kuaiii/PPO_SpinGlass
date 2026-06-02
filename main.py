@@ -10,8 +10,8 @@ import numpy as np
 import torch
 import networkx as nx
 
-from train_ppo import SpinGlassPPOTrainer
-from eval import (
+from src.train_ppo import SpinGlassPPOTrainer
+from src.eval import (
     evaluate_dismantle_policy,
     evaluate_construct_policy,
     random_dismantle_baseline,
@@ -41,7 +41,7 @@ def main():
     parser.add_argument(
         "--mode",
         type=str,
-        default="train",
+        default="eval",
         choices=["train", "eval", "test"],
         help="运行模式: train(训练), eval(评估), test(测试)",
     )
@@ -67,8 +67,8 @@ def main():
     parser.add_argument(
         "--device",
         type=str,
-        default="auto",
-        help="计算设备: auto, cpu, cuda",
+        default="cuda",
+        help="计算设备: cuda, cpu",
     )
     parser.add_argument(
         "--seed",
@@ -183,6 +183,11 @@ def main():
         default=50,
         help="每隔多少iteration保存一次checkpoint，0表示不保存",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="从已有的 checkpoint 接续训练",
+    )
 
     args = parser.parse_args()
     set_seed(args.seed)
@@ -220,7 +225,7 @@ def main():
             random_graph_mix=args.random_graph_mix,
         )
         ckpt_path = f"checkpoint_{args.task}.pt"
-        history = trainer.train(max_iters=args.max_iters, save_every=args.save_every, ckpt_path=ckpt_path)
+        history = trainer.train(max_iters=args.max_iters, save_every=args.save_every, ckpt_path=ckpt_path, resume=args.resume)
         print("\n[Train] Training completed.")
         print(f"[Train] Final avg reward: {history['reward'][-1]:.4f}")
 
@@ -236,8 +241,8 @@ def main():
             print(f"[Error] Checkpoint not found: {ckpt_path}")
             return
 
-        checkpoint = torch.load(ckpt_path, map_location="cpu")
-        device = torch.device("cuda" if torch.cuda.is_available() and args.device != "cpu" else "cpu")
+        device = torch.device(args.device)
+        checkpoint = torch.load(ckpt_path, map_location=device)
 
         from models.encoder import TGNNEncoder
         from models.coupling import AttentionCoupling

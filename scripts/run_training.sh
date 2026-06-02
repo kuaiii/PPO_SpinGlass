@@ -4,8 +4,11 @@
 
 cd "$(dirname "$0")"
 
+# 使用 kanResilience 环境的 Python，启用 GPU 训练
+PYTHON=/home/u2024010340/.conda/envs/kanResilience/bin/python
+
 # 使用 -u 保证无缓冲输出，实时写入日志
-nohup python3 -u main.py \
+nohup $PYTHON -u ../main.py \
     --mode train \
     --task dismantle \
     --train_data_dir dataset/data/raw/train \
@@ -13,11 +16,12 @@ nohup python3 -u main.py \
     --subgraph_size 100 \
     --max_iters 300 \
     --num_episodes 20 \
-    --device cpu \
+    --device cuda \
     --n_nodes 20 \
     --batch_size 64 \
     --hidden_dim 64 \
     --num_heads 4 \
+    --resume \
     "$@" \
     > train_real_data.log 2>&1 &
 

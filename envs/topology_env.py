@@ -225,7 +225,7 @@ class DismantleEnv:
 
         return self._get_observation(), reward, done, info
 
-    def get_alive_mask(self, device: torch.device = torch.device("cpu")) -> torch.Tensor:
+    def get_alive_mask(self, device: torch.device = torch.device("cuda")) -> torch.Tensor:
         """
         获取存活节点掩码。
 
@@ -255,7 +255,7 @@ class DismantleEnv:
                 continue
             neighbors = list(self.G.neighbors(i))
             if len(neighbors) > 0:
-                h[i] = local_field(J, self.s, i, neighbors)
+                h[i] = local_field(J, self.s.to(J.device), i, neighbors)
         return h
 
     def get_degrees(self) -> torch.Tensor:
@@ -403,7 +403,7 @@ class ConstructEnv:
 
         return self._get_observation(), reward, done, info
 
-    def get_edge_mask(self, device: torch.device = torch.device("cpu")) -> torch.Tensor:
+    def get_edge_mask(self, device: torch.device = torch.device("cuda")) -> torch.Tensor:
         """
         获取有效动作掩码矩阵 (n, n)。
         这里返回布尔掩码表示哪些边可以添加。
